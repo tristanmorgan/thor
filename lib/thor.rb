@@ -660,4 +660,89 @@ class Thor
       self.class.help(shell, subcommand)
     end
   end
+
+  map File.basename($PROGRAM_NAME) => :autocomplete
+  desc "#{File.basename($PROGRAM_NAME)} CURR PREV", "Autocompletion for bourne shells", hide: true
+  def autocomplete(curr = nil, prev = nil)
+    curr, prev = fix_args(curr, prev)
+    comp_line = ENV["COMP_LINE"]
+    comp_point_str = ENV["COMP_POINT"]
+    unless comp_line && comp_point_str
+      exec_name = File.basename($PROGRAM_NAME)
+      warn "# enable autocomplete with 'complete -C #{$PROGRAM_NAME} #{exec_name}'"
+      exit 1
+    end
+
+    comp_lines = comp_line[0..(comp_point_str.to_i)].split
+
+    comp_type, sub_cmd = comp_type(comp_lines: comp_lines, prev: prev)
+    list = fetch_auto_resp(comp_type, sub_cmd)
+    puts list.select { |elem| elem.start_with?(curr) }.sort!.uniq.join("\n")
+  end
+
+private
+
+  # when a double dash is parsed it is dropped from the args but we need it
+  def fix_args(curr, prev)
+    if prev.nil?
+      [ARGF.argv[1], ARGF.argv[2]]
+    else
+      [curr, prev]
+    end
+  end
+
+  # determine the type of completion needed
+  def comp_type(comp_lines:, prev:)
+    sub_cmd = sub_command(comp_lines)
+    comp_idx = comp_lines.rindex(prev)
+
+    comp_idx = comp_idx - 1 if prev == "help"
+
+    case comp_idx
+    when 0
+      comp_type = :command
+    when 1
+      comp_type = :subcommand
+    else
+      comp_type = :flags
+    end
+
+    [comp_type, sub_cmd]
+  end
+
+  # given a type return the right list for completions
+  def fetch_auto_resp(comp_type, sub_cmd)
+    case comp_type
+    when :command
+      commands = self.class.subcommands + self.class.all_commands.keys
+      commands = commands.map { |elem| elem.tr("_", "-") }
+      commands.reject! { |elem| %w[autocomplete default].include?(elem) }
+    when :subcommand
+      commands = self.class.subcommand_classes[sub_cmd].all_commands.keys
+      commands = commands.map { |elem| elem.tr("_", "-") }
+      commands.reject! { |elem| %w[autocomplete default].include?(elem) }
+    when :flags
+      options = self.class.all_commands[sub_cmd].options.values
+      options.map(&:aliases).flatten! + options.map(&:switch_name)
+    end
+  end
+
+  # catch the command from prefixes and aliases
+  def sub_command(comp_lines)
+    return "" if comp_lines.length < 2
+
+    sub_cmd = comp_lines[1]
+
+    list = self.class.subcommands
+
+    return self.class.map[sub_cmd].to_s if self.class.map.key? sub_cmd
+
+    return sub_cmd if list.include?(sub_cmd)
+
+    list.select! { |elem| elem.start_with?(sub_cmd) }
+
+    return list.first if list.length == 1
+
+    ""
+  end
 end
